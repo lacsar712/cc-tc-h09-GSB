@@ -59,6 +59,10 @@
 
   async function submit() {
     error = "";
+    if (!chainage.trim()) {
+      error = "桩号不能为空";
+      return;
+    }
     loading = true;
     try {
       const res = await fetch("/api/logs", {
@@ -150,7 +154,7 @@
         <input placeholder="例如 K20+050" bind:value={chainage} />
         <label>收敛（毫米，可正可负）</label>
         <input type="number" step="0.1" bind:value={deltaMm} />
-        <button disabled={loading} on:click={submit}>提交（进入待认领）</button>
+        <button disabled={loading || !chainage.trim()} on:click={submit}>提交（进入待认领）</button>
         {#if error}<p class="err">{error}</p>{/if}
       </section>
     {/if}

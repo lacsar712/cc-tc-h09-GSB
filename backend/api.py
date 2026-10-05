@@ -7,6 +7,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from claimer import start as start_claimer
+from h09_extra_trap import prepare_chainage
 from models import Base, ConvergenceLog, SessionLocal, engine, row_dict
 
 SECRET = os.environ.get("JWT_SECRET", "tunnelconv-dev-secret")
@@ -127,9 +128,9 @@ def list_logs():
 @require_writer
 def create_log():
     body = request.get_json(silent=True) or {}
-    chainage = (body.get("chainage") or "").strip()
-    from h09_extra_trap import prepare_chainage
-    chainage = prepare_chainage(chainage)
+    raw_chainage = body.get("chainage")
+    # 落库前截住：空桩号或纯空格一律 400，不补“未命名断面”，也不写库
+    chainage = prepare_chainage(raw_chainage if isinstance(raw_chainage, str) else "")
     if not chainage:
         return jsonify({"detail": "桩号不能为空"}), 400
     try:
@@ -149,5 +150,8 @@ def create_log():
         db.commit()
         db.refresh(row)
         return jsonify(row_dict(row)), 201
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
