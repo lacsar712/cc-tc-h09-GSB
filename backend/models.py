@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, Integer, String, create_engine
+from sqlalchemy import DateTime, Float, Integer, String, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 DSN = os.environ.get("DATABASE_URL", "postgresql://app:app@localhost:54401/tunnelconv")
@@ -13,12 +13,38 @@ class Base(DeclarativeBase):
     pass
 
 
+def ensure_columns():
+    """老卷（H09 前建的表）补 sidewall_mm 列；全新库由 create_all 直接建出，无需 ALTER。"""
+    insp = inspect(engine)
+    if not insp.has_table(ConvergenceLog.__tablename__):
+        return
+    columns = {c["name"] for c in insp.get_columns(ConvergenceLog.__tablename__)}
+    if "sidewall_mm" not in columns:
+        is_pg = engine.dialect.name == "postgresql"
+        with engine.begin() as conn:
+            col_type = "DOUBLE PRECISION" if is_pg else "FLOAT"
+            conn.execute(
+                text(f"ALTER TABLE convergence_logs ADD COLUMN sidewall_mm {col_type}")
+            )
+            conn.execute(
+                text(
+                    "UPDATE convergence_logs SET sidewall_mm = delta_mm "
+                    "WHERE sidewall_mm IS NULL"
+                )
+            )
+            if is_pg:
+                conn.execute(
+                    text("ALTER TABLE convergence_logs ALTER COLUMN sidewall_mm SET NOT NULL")
+                )
+
+
 class ConvergenceLog(Base):
     __tablename__ = "convergence_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     chainage: Mapped[str] = mapped_column(String, nullable=False)
     delta_mm: Mapped[float] = mapped_column(Float, nullable=False)
+    sidewall_mm: Mapped[float] = mapped_column(Float, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
     verdict: Mapped[str | None] = mapped_column(String, nullable=True)
     reason: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -32,6 +58,7 @@ def row_dict(row: ConvergenceLog) -> dict:
         "id": row.id,
         "chainage": row.chainage,
         "delta_mm": row.delta_mm,
+        "sidewall_mm": row.sidewall_mm,
         "status": row.status,
         "verdict": row.verdict,
         "reason": row.reason,

@@ -7,7 +7,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from claimer import start as start_claimer
-from models import Base, ConvergenceLog, SessionLocal, engine, row_dict
+from models import Base, ConvergenceLog, SessionLocal, engine, ensure_columns, row_dict
 
 SECRET = os.environ.get("JWT_SECRET", "tunnelconv-dev-secret")
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -21,6 +21,7 @@ app = Flask(__name__)
 
 def seed():
     Base.metadata.create_all(engine)
+    ensure_columns()
     db = SessionLocal()
     try:
         if db.query(ConvergenceLog).count() > 0:
@@ -35,6 +36,7 @@ def seed():
                 ConvergenceLog(
                     chainage=chainage,
                     delta_mm=delta,
+                    sidewall_mm=delta,
                     status="done",
                     verdict=verdict,
                     reason=reason,
@@ -123,24 +125,44 @@ def list_logs():
         db.close()
 
 
+def _parse_mm(body: dict, key: str, label: str):
+    """读取毫米数值；空串、纯空格、None、布尔、非数字一律拒绝。"""
+    raw = body.get(key)
+    if isinstance(raw, bool) or raw is None:
+        raise ValueError(label)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise ValueError(label)
+    if value != value or value in (float("inf"), float("-inf")):
+        raise ValueError(label)
+    return value
+
+
 @app.post("/api/logs")
 @require_writer
 def create_log():
     body = request.get_json(silent=True) or {}
-    chainage = (body.get("chainage") or "").strip()
-    from h09_extra_trap import prepare_chainage
-    chainage = prepare_chainage(chainage)
-    if not chainage:
+
+    # 落库前校验：桩号不填或只打空格一律拒收，绝不补"未命名断面"。
+    raw_chainage = body.get("chainage")
+    if not isinstance(raw_chainage, str) or not raw_chainage.strip():
         return jsonify({"detail": "桩号不能为空"}), 400
+    chainage = raw_chainage.strip()
+
     try:
-        delta_mm = float(body.get("delta_mm"))
-    except (TypeError, ValueError):
-        return jsonify({"detail": "收敛值必须是数字"}), 400
+        delta_mm = _parse_mm(body, "delta_mm", "收敛值")
+        sidewall_mm = _parse_mm(body, "sidewall_mm", "边墙值")
+    except ValueError as exc:
+        return jsonify({"detail": f"{exc.args[0]}必须是数字"}), 400
+
+    # 全部字段通过校验后才打开会话写库，失败不留任何半截行。
     db = SessionLocal()
     try:
         row = ConvergenceLog(
             chainage=chainage,
             delta_mm=delta_mm,
+            sidewall_mm=sidewall_mm,
             status="pending",
             created_by=g.user["username"],
             created_at=datetime.now(timezone.utc),

@@ -5,6 +5,7 @@
   let loginPass = "surv123456";
   let chainage = "";
   let deltaMm = "";
+  let sidewallMm = "";
   let error = "";
   let loading = false;
   let timer;
@@ -58,13 +59,36 @@
   }
 
   async function submit() {
+    if (loading) return;
     error = "";
+
+    // 页面先拦一道：空格子/纯空格不发请求，更不会补假桩号。
+    const chainageTrim = chainage.trim();
+    if (!chainageTrim) {
+      error = "桩号不能为空";
+      return;
+    }
+    const deltaRaw = String(deltaMm ?? "").trim();
+    if (deltaRaw === "" || Number.isNaN(Number(deltaRaw))) {
+      error = "收敛（毫米）必须填数字";
+      return;
+    }
+    const sidewallRaw = String(sidewallMm ?? "").trim();
+    if (sidewallRaw === "" || Number.isNaN(Number(sidewallRaw))) {
+      error = "边墙（毫米）必须填数字";
+      return;
+    }
+
     loading = true;
     try {
       const res = await fetch("/api/logs", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...headers() },
-        body: JSON.stringify({ chainage, delta_mm: Number(deltaMm) }),
+        body: JSON.stringify({
+          chainage: chainageTrim,
+          delta_mm: Number(deltaMm),
+          sidewall_mm: Number(sidewallMm),
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -73,6 +97,7 @@
       }
       chainage = "";
       deltaMm = "";
+      sidewallMm = "";
       await refresh();
     } catch {
       error = "提交时网络异常";
@@ -150,6 +175,8 @@
         <input placeholder="例如 K20+050" bind:value={chainage} />
         <label>收敛（毫米，可正可负）</label>
         <input type="number" step="0.1" bind:value={deltaMm} />
+        <label>边墙（毫米，可正可负）</label>
+        <input type="number" step="0.1" bind:value={sidewallMm} />
         <button disabled={loading} on:click={submit}>提交（进入待认领）</button>
         {#if error}<p class="err">{error}</p>{/if}
       </section>
@@ -157,7 +184,7 @@
     <section>
       <table>
         <thead>
-          <tr><th>编号</th><th>桩号</th><th>收敛mm</th><th>状态</th><th>结论</th><th>说明</th></tr>
+          <tr><th>编号</th><th>桩号</th><th>收敛mm</th><th>边墙mm</th><th>状态</th><th>结论</th><th>说明</th></tr>
         </thead>
         <tbody>
           {#each logs as row}
@@ -165,6 +192,7 @@
               <td>{row.id}</td>
               <td>{row.chainage}</td>
               <td>{row.delta_mm}</td>
+              <td>{row.sidewall_mm}</td>
               <td><span class="tag {row.status === 'pending' ? 'pending' : 'ok'}">{row.status === 'pending' ? '待处理' : '已完成'}</span></td>
               <td>
                 {#if row.verdict}
